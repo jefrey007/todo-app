@@ -1,17 +1,18 @@
-# Use a lightweight Python image
-FROM python:3.9-slim
+# Base image
+FROM node:16
 
-# Set the working directory
+# Set working directory
 WORKDIR /app
+
+# Copy package.json and install dependencies
+COPY package*.json ./
+RUN npm install
 
 # Copy application files
 COPY . .
 
-# Install dependencies
-RUN pip install -r requirements.txt
+# Expose application port
+EXPOSE 3000
 
-# Expose the application port
-EXPOSE 5000
-
-# Define the command to run the application
-CMD ["python", "app.py"]
+# Start the application
+CMD ["npm", "start"]
