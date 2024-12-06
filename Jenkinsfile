@@ -2,50 +2,57 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_IMAGE = 'yourdockerhubusername/todo-app'
-        DOCKER_TAG = 'latest'
-        EC2_HOST = 'your-ec2-ip-or-dns'
-        EC2_USER = 'ubuntu'  // Replace with the appropriate user for your EC2 instance
-        SSH_KEY_PATH = '/path/to/your/ssh/key.pem'  // Path to your EC2 SSH private key
+        // DockerHub credentials ID in Jenkins
+        DOCKER_HUB_CREDENTIALS = 'dockerhub-credentials'
+        // DockerHub repository name
+        DOCKER_HUB_REPO = 'your-dockerhub-username/todo-app'
+        // Docker image tag (can use Git commit hash, branch, or build number)
+        IMAGE_TAG = "${env.BUILD_NUMBER}"
+        // EC2 SSH credentials ID in Jenkins
+        EC2_CREDENTIALS = 'ec2-ssh-credentials'
+        // Target EC2 instance IP address
+        EC2_IP = 'your-ec2-instance-ip'
     }
 
     stages {
         stage('Checkout') {
             steps {
-                // Checkout the code from GitHub using the credentials stored in Jenkins
-                git credentialsId: 'github-pat', url: 'https://github.com/jefrey007/todo-app.git'
+                echo 'Cloning the repository...'
+                git branch: 'main', url: 'https://github.com/jefrey007/todo-app.git'
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build') {
             steps {
-                script {
-                    // Build the Docker image using the Dockerfile
-                    sh 'docker build -t $DOCKER_IMAGE:$DOCKER_TAG .'
-                }
+                echo 'Building the Docker image...'
+                sh """
+                docker build -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} .
+                """
             }
         }
 
-        stage('Push Docker Image to Docker Hub') {
+        stage('Push') {
             steps {
-                script {
-                    // Log in to Docker Hub and push the image
-                    sh "echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin"
-                    sh 'docker push $DOCKER_IMAGE:$DOCKER_TAG'
-                }
-            }
-        }
-
-        stage('Deploy to EC2') {
-            steps {
-                script {
-                    // Deploy the Docker image to your EC2 instance
-                    // Assuming Docker is already installed on the EC2 instance
+                echo 'Pushing the Docker image to Docker Hub...'
+                withDockerRegistry([credentialsId: DOCKER_HUB_CREDENTIALS, url: '']) {
                     sh """
-                        ssh -i $SSH_KEY_PATH $EC2_USER@$EC2_HOST << EOF
-                        docker pull $DOCKER_IMAGE:$DOCKER_TAG
-                        docker run -d -p 80:80 $DOCKER_IMAGE:$DOCKER_TAG
-                        EOF
+                    docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}
+                    """
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo 'Deploying the Docker container on the EC2 instance...'
+                sshagent(credentials: [EC2_CREDENTIALS]) {
+                    sh """
+                    ssh -o StrictHostKeyChecking=no ubuntu@${EC2_IP} << EOF
+                    docker pull ${DOCKER_HUB_REPO}:${IMAGE_TAG}
+                    docker stop todo-app || true
+                    docker rm todo-app || true
+                    docker run -d --name todo-app -p 80:80 ${DOCKER_HUB_REPO}:${IMAGE_TAG}
+                    EOF
                     """
                 }
             }
@@ -54,16 +61,16 @@ pipeline {
 
     post {
         always {
-            // Clean up or perform any necessary post-build steps
-            echo 'Pipeline execution completed'
+            echo 'Cleaning up Docker images from Jenkins agent...'
+            sh """
+            docker rmi ${DOCKER_HUB_REPO}:${IMAGE_TAG} || true
+            """
         }
-
         success {
-            echo 'Pipeline succeeded!'
+            echo 'Pipeline completed successfully!'
         }
-
         failure {
-            echo 'Pipeline failed!'
+            echo 'Pipeline failed. Please check the logs.'
         }
     }
 }
